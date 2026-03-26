@@ -1,0 +1,107 @@
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GAR_LOCATION: us-central1
+  GAR_REPOSITORY: devsecops-repo
+  IMAGE_NAME: devsecops-api
+  SERVICE_NAME: devsecops-api-service
+  REGION: us-central1
+
+jobs:
+  build-and-test:
+    name: Build, Test & Scan (SAST/SCA)
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Required for SonarCloud
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --no-restore --configuration Release
+
+    - name: Unit Tests
+      run: dotnet test --no-build --verbosity normal --configuration Release
+
+    - name: SonarCloud Scan (Code Quality)
+      # You can replace the uses action with sonarscanner tool installation as needed for .NET 
+      # or run standard dockerized sonar. Assuming standard approach:
+      uses: SonarSource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      with:
+        args: >
+          -Dsonar.projectKey=DevSecOpsDemo_API
+          -Dsonar.organization=your-organization
+
+    - name: Snyk Security Scan (Dependencies)
+      uses: snyk/actions/dotnet@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        args: --all-projects
+
+  docker-and-deploy:
+    name: Build Image, Push to GAR, & Deploy to Cloud Run
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Auth to Google Cloud
+      id: auth
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+    - name: Configure Docker for GAR
+      run: |
+        gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
+
+    - name: Build Docker Image
+      run: docker build -t ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
+
+    - name: Push Docker Image
+      run: docker push ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+    - name: Deploy to Cloud Run
+      id: deploy
+      uses: google-github-actions/deploy-cloudrun@v2
+      with:
+        service: ${{ env.SERVICE_NAME }}
+        region: ${{ env.REGION }}
+        image: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        flags: '--allow-unauthenticated=false'  # Secure by default
+
+    - name: Get Cloud Run URL and IdToken
+      run: |
+        echo "CLOUD_RUN_URL=${{ steps.deploy.outputs.url }}" >> $GITHUB_ENV
+        TOKEN=$(gcloud auth print-identity-token --audiences="${{ steps.deploy.outputs.url }}")
+        echo "::add-mask::$TOKEN"
+        echo "ID_TOKEN=$TOKEN" >> $GITHUB_ENV
+
+    - name: OWASP ZAP DAST Scan
+      uses: zaproxy/action-baseline@v0.12.0
+      with:
+        target: ${{ env.CLOUD_RUN_URL }}/swagger/index.html
+        cmd_options: '-z "-config replacer.full_list(0).description=auth -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=req_header -config replacer.full_list(0).matchstr=Authorization -config replacer.full_list(0).regex=false -config replacer.full_list(0).replacement=\"Bearer ${{ env.ID_TOKEN }}\""'

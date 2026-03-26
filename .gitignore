@@ -1,0 +1,5 @@
+/src/DevSecOpsDemo.Api/bin
+/src/DevSecOpsDemo.Api/obj
+/tests/DevSecOpsDemo.Tests/bin
+/tests/DevSecOpsDemo.Tests/obj
+/.vscode
