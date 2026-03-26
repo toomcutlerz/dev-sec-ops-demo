@@ -55,8 +55,8 @@ jobs:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       with:
         args: >
-          -Dsonar.projectKey=DevSecOpsDemo_API
-          -Dsonar.organization=your-organization
+          -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+          -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
 
   snyk-scan:
     name: Snyk Security Scan (Dependencies)
