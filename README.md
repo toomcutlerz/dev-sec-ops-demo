@@ -80,16 +80,21 @@ Configure the following secrets in your GitHub repository before running the act
 
 ## Pipeline Stages Breakdown
 
-The GitHub Actions workflow (`.github/workflows/devsecops-pipeline.yml`) is split into two main jobs:
+The GitHub Actions workflow (`.github/workflows/devsecops-pipeline.yml`) is split into the following main jobs:
 
 1. **build-and-test**: 
    - Checks out the code.
    - Sets up .NET 10.
    - Restores, builds, and runs unit tests.
-   - Executes SonarCloud and Snyk scans.
-2. **docker-and-deploy**: (Runs only on `main` branch after `build-and-test` passes)
+2. **sonarcloud-scan**:
+   - Executes SonarCloud for code quality analysis.
+3. **snyk-scan**:
+   - Executes Snyk to scan dependencies for vulnerabilities.
+4. **build-and-push-docker**: (Runs only on `main` branch after `build-and-test`, `sonarcloud-scan`, and `snyk-scan` pass)
    - Authenticates to Google Cloud via Service Account.
    - Configures Docker for Google Artifact Registry.
    - Builds and pushes the Docker image.
+5. **deploy-to-cloud-run**: (Runs only on `main` branch after `build-and-push-docker` passes)
+   - Authenticates to Google Cloud via Service Account.
    - Deploys the image to Google Cloud Run as a secure (authenticated) service.
    - Generates an ID token and runs an OWASP ZAP Baseline scan against the deployed service's Swagger endpoint.
